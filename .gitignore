@@ -1,0 +1,21 @@
+# Byte‑compiled / cache
+__pycache__/
+*.py[cod]
+
+# Environment
+.env
+
+# Package artifacts
+*.egg-info/
+dist/
+build/
+
+# Results & data
+results/
+data/target/
+data/references/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
