@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 import re
 from transformers import GPT2TokenizerFast
 from collections import deque
+from asyncio import Lock
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,8 +33,25 @@ class AgentConfig:
     temperature: float = 0.5
     max_tokens: int = 1000
     embedding_dimension: int = 1536
-    structured_summary_prompt: str = """You are an expert ecological researcher and scientific writer.\nSummarize the following ecological research paper using this format:\n\n- **Title**:\n- **Study Context**:\n- **Methods**:\n- **Key Findings**:\n- **Ecological Implications**:\n\nThen provide a one-sentence summary suitable for inclusion in a research proposal under:\n\n- **Key Sentence for Research Proposal**:\n\nBe accurate, concise, and use scientific language."""
+    structured_summary_prompt: str = (
+        "You are an expert ecological researcher and scientific writer.\n"
+        "Summarize the following ecological research paper using this format:\n\n"
+        "- **Title**:\n"
+        "- **Study Context**:\n"
+        "- **Methods**:\n"
+        "- **Key Findings**:\n"
+        "- **Ecological Implications**:\n\n"
+        "Then provide a one-sentence summary suitable for inclusion in a research proposal under:\n\n"
+        "- **Key Sentence for Research Proposal**:\n\n"
+        "Be accurate, concise, and use scientific language."
+    )
     max_reference_docs: int = 10  # Max number of references to embed
+    model_price: Dict[ModelType, Tuple[float, float]] = field(
+        default_factory=lambda: {
+            ModelType.GPT_4: (0.03, 0.06),      # input, output $ per 1K tokens
+            ModelType.GPT_3_5: (0.0015, 0.002)   # input, output $ per 1K tokens
+        }
+    )
 
 class StructuredSummary(BaseModel):
     title: str
@@ -42,6 +60,29 @@ class StructuredSummary(BaseModel):
     key_findings: str
     ecological_implications: str
     key_sentence_for_research_proposal: str
+
+    @validator('*')
+    def not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("Field cannot be empty")
+        return v.strip()
+
+    @classmethod
+    def from_text(cls, text: str) -> "StructuredSummary":
+        # Helper to extract sections
+        def extract_section(header: str) -> str:
+            pattern = rf"- \*\*{header}\*\*: ?(.+?)(?=\n- \*\*|$)"
+            match = re.search(pattern, text, re.DOTALL)
+            return match.group(1).strip() if match else ""
+
+        return cls(
+            title=extract_section("Title"),
+            study_context=extract_section("Study Context"),
+            methods=extract_section("Methods"),
+            key_findings=extract_section("Key Findings"),
+            ecological_implications=extract_section("Ecological Implications"),
+            key_sentence_for_research_proposal=extract_section("Key Sentence for Research Proposal")
+        )
 
 @dataclass
 class TextChunk:
@@ -52,10 +93,11 @@ class TextChunk:
 class VectorMemory:
     def __init__(self, dimension: int = 1536, max_texts: int = 1000):
         self.index = faiss.IndexFlatL2(dimension)
-        self.texts: deque = deque(maxlen=max_texts)  # Using deque for automatic FIFO
+        self.texts: deque = deque(maxlen=max_texts)
         self.dimension = dimension
         self.embeddings = np.zeros((0, dimension), dtype=np.float32)
-    
+        self._lock = Lock()
+
     async def _embed(self, text: str) -> np.ndarray:
         response = await openai.Embedding.acreate(
             model=ModelType.EMBEDDING.value,
@@ -65,26 +107,20 @@ class VectorMemory:
         return np.array(response["data"][0]["embedding"], dtype=np.float32)
 
     async def add(self, texts: List[str]):
-        new_embeddings = []
-        for text in texts:
-            emb = await self._embed(text)
-            new_embeddings.append(emb)
-            self.texts.append(text)
-        
-        # Update FAISS index with new embeddings
-        new_embeddings_array = np.vstack(new_embeddings)
-        if self.embeddings.shape[0] == 0:
-            self.embeddings = new_embeddings_array
-        else:
-            self.embeddings = np.vstack([self.embeddings, new_embeddings_array])
-        
-        # Rebuild index if needed
-        self.index = faiss.IndexFlatL2(self.dimension)
-        self.index.add(self.embeddings)
-        
-        logger.info(f"Vector memory now contains {len(self.texts)} documents")
+        async with self._lock:
+            new_embeddings = []
+            for text in texts:
+                emb = await self._embed(text)
+                new_embeddings.append(emb)
+                self.texts.append(text)
 
-    async def query(self, prompt: str, k=3) -> List[str]:
+            new_array = np.vstack(new_embeddings)
+            self.embeddings = new_array if self.embeddings.size == 0 else np.vstack([self.embeddings, new_array])
+            self.index = faiss.IndexFlatL2(self.dimension)
+            self.index.add(self.embeddings)
+            logger.info(f"Vector memory now contains {len(self.texts)} documents")
+
+    async def query(self, prompt: str, k: int = 3) -> List[str]:
         if not self.texts:
             return []
         emb = await self._embed(prompt)
@@ -94,99 +130,56 @@ class VectorMemory:
 
 async def extract_text_from_pdf(pdf_path: str) -> str:
     reader = PdfReader(pdf_path)
-    text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
     logger.info(f"Extracted {len(text.split())} words from PDF: {pdf_path}")
     return text
-
-def build_summarization_prompt(paper_text: str, context_chunks: List[str], config: AgentConfig) -> List[Dict[str, str]]:
-    messages = [{"role": "system", "content": config.structured_summary_prompt}]
-
-    if context_chunks:
-        retrieved_texts = "\n\n".join(context_chunks)
-        messages.append({
-            "role": "user",
-            "content": f"Here is helpful background:\n{retrieved_texts}"
-        })
-
-    messages.append({
-        "role": "user",
-        "content": f"Summarize this paper:\n\n{paper_text}"
-    })
-
-    logger.info(f"Built summarization prompt with {len(messages)} message blocks")
-    return messages
-
-async def extract_texts_from_pdf_files(pdf_paths: List[str]) -> List[str]:
-    texts = []
-    for path in pdf_paths:
-        try:
-            text = await extract_text_from_pdf(path)
-            if text:
-                texts.append(text)
-        except Exception as e:
-            logger.warning(f"Failed to extract text from {path}: {e}")
-    return texts
 
 class SmartTextSplitter:
     def __init__(self, max_tokens: int = 4000):
         self.max_tokens = max_tokens
-        self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-        
+        self.tokenizer = None
+    
+    def _ensure_tokenizer(self):
+        if self.tokenizer is None:
+            self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+    
+    def cleanup(self):
+        if self.tokenizer:
+            del self.tokenizer
+            self.tokenizer = None
+
     def count_tokens(self, text: str) -> int:
         return len(self.tokenizer.encode(text))
-    
+
     def split_text(self, text: str) -> List[TextChunk]:
-        # Split into paragraphs first
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         chunks: List[TextChunk] = []
-        current_chunk = []
-        current_token_count = 0
-        
-        for paragraph in paragraphs:
-            paragraph_tokens = self.count_tokens(paragraph)
-            
-            # If single paragraph exceeds max tokens, split by sentences
-            if paragraph_tokens > self.max_tokens:
-                sentences = re.split(r'(?<=[.!?])\s+', paragraph)
-                for sentence in sentences:
-                    sentence_tokens = self.count_tokens(sentence)
-                    
-                    if current_token_count + sentence_tokens <= self.max_tokens:
-                        current_chunk.append(sentence)
-                        current_token_count += sentence_tokens
+        current_chunk: List[str] = []
+        current_count = 0
+
+        for para in paragraphs:
+            tokens = self.count_tokens(para)
+            if tokens > self.max_tokens:
+                for sent in re.split(r'(?<=[.!?])\s+', para):
+                    stoks = self.count_tokens(sent)
+                    if current_count + stoks <= self.max_tokens:
+                        current_chunk.append(sent)
+                        current_count += stoks
                     else:
-                        if current_chunk:
-                            chunk_text = ' '.join(current_chunk)
-                            chunks.append(TextChunk(
-                                text=chunk_text,
-                                tokens=current_token_count
-                            ))
-                        current_chunk = [sentence]
-                        current_token_count = sentence_tokens
-            
-            # Normal paragraph processing
-            elif current_token_count + paragraph_tokens <= self.max_tokens:
-                current_chunk.append(paragraph)
-                current_token_count += paragraph_tokens
+                        chunks.append(TextChunk(text=' '.join(current_chunk), tokens=current_count))
+                        current_chunk = [sent]
+                        current_count = stoks
             else:
-                if current_chunk:
-                    chunk_text = '\n\n'.join(current_chunk)
-                    chunks.append(TextChunk(
-                        text=chunk_text,
-                        tokens=current_token_count
-                    ))
-                current_chunk = [paragraph]
-                current_token_count = paragraph_tokens
-        
-        # Don't forget the last chunk
+                if current_count + tokens <= self.max_tokens:
+                    current_chunk.append(para)
+                    current_count += tokens
+                else:
+                    chunks.append(TextChunk(text='\n\n'.join(current_chunk), tokens=current_count))
+                    current_chunk = [para]
+                    current_count = tokens
+
         if current_chunk:
-            chunk_text = '\n\n'.join(current_chunk)
-            chunks.append(TextChunk(
-                text=chunk_text,
-                tokens=current_token_count
-            ))
-        
+            chunks.append(TextChunk(text='\n\n'.join(current_chunk), tokens=current_count))
         return chunks
 
 class SummarizationAgent:
@@ -203,78 +196,62 @@ class SummarizationAgent:
         self.memory = VectorMemory(dimension=self.config.embedding_dimension)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def summarize_pdf(self, pdf_path: str, reference_texts: List[str], 
-                           max_cost_usd: float = 1.0) -> StructuredSummary:
+    async def summarize_pdf(self, pdf_path: str, reference_texts: List[str], max_cost_usd: float = 1.0) -> StructuredSummary:
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-            
-        # Add file size check
-        if os.path.getsize(pdf_path) > 100 * 1024 * 1024:  # 100MB limit
+        if os.path.getsize(pdf_path) > 100 * 1024 * 1024:
             raise ValueError("PDF file too large")
 
-        # Track costs
+        if reference_texts:
+            await self.memory.add(reference_texts[:self.config.max_reference_docs])
+
         current_cost = 0.0
-        
-        # Extract and process text in chunks
         paper_text = await extract_text_from_pdf(pdf_path)
-        chunks = []
-        summaries = []
-        
+        summaries: List[str] = []
+
         async for chunk in self.process_large_text(paper_text):
-            # Estimate cost before processing
-            estimated_cost = self._estimate_cost(chunk.tokens)
-            if current_cost + estimated_cost > max_cost_usd:
+            est = self._estimate_cost(chunk.tokens)
+            if current_cost + est > max_cost_usd:
                 logger.warning("Cost limit reached, stopping processing")
                 break
-                
             context = await self.memory.query(chunk.text)
             messages = build_summarization_prompt(chunk.text, context, self.config)
-            
             response = await self._get_completion(messages)
             current_cost += response.cost
             summaries.append(response.content)
-            
-        # Combine chunk summaries into final summary
+
         if not summaries:
             raise ValueError("No text chunks were processed")
-            
-        final_summary = await self._merge_summaries(summaries)
-        return final_summary
-    
+        return await self._merge_summaries(summaries)
+
     async def _merge_summaries(self, summaries: List[str]) -> StructuredSummary:
-        # Create a prompt to merge multiple summaries
-        merge_prompt = f"""Merge these {len(summaries)} section summaries into a single coherent summary. 
-        Maintain the same structured format but combine overlapping information and resolve any contradictions:
-        
-        {'\n\n'.join(summaries)}"""
-        
+        merge_prompt = (
+            f"Merge these {len(summaries)} section summaries into a single coherent summary." +
+            " Maintain the same structured format but combine overlapping information and resolve any contradictions:\n\n" +
+            "\n\n".join(summaries)
+        )
         messages = [
             {"role": "system", "content": self.config.structured_summary_prompt},
             {"role": "user", "content": merge_prompt}
         ]
-        
         response = await self._get_completion(messages)
-        # Parse and validate the merged summary
-        return self._parse_summary(response.content)
-    
+        return await self._parse_summary(response.content)
+
     def _estimate_cost(self, num_tokens: int) -> float:
-        input_rate, output_rate = self.config.model_price[self.config.model]
-        # Assume output is roughly same size as input for estimation
-        return (num_tokens / 1000) * (input_rate + output_rate)
+        in_rate, out_rate = self.config.model_price[self.config.model]
+        return (num_tokens / 1000) * (in_rate + out_rate)
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        # Cleanup resources
         if hasattr(self, 'memory'):
             del self.memory.index
         if hasattr(self, 'text_splitter'):
-            del self.text_splitter.tokenizer
-    
+            self.text_splitter.cleanup()
+
     async def process_large_text(self, text: str) -> AsyncIterator[TextChunk]:
-        chunks = self.text_splitter.split_text(text)
-        for chunk in chunks:
+        for chunk in self.text_splitter.split_text(text):
             yield chunk
 
     async def _parse_summary(self, summary_text: str) -> StructuredSummary:
@@ -283,3 +260,38 @@ class SummarizationAgent:
         except ValidationError as e:
             logger.error(f"Failed to parse summary: {e}")
             raise
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def _get_completion(self, messages: List[Dict[str, str]]):
+        response = await openai.ChatCompletion.acreate(
+            model=self.config.model.value,
+            messages=messages,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            stream=False
+        )
+        content = response.choices[0].message.content
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens
+        completion_tokens = usage.completion_tokens
+        cost = ((prompt_tokens / 1000) * self.config.model_price[self.config.model][0]
+                + (completion_tokens / 1000) * self.config.model_price[self.config.model][1])
+        return CompletionResult(content, cost)
+
+def build_summarization_prompt(paper_text: str, context_chunks: List[str], config: AgentConfig) -> List[Dict[str, str]]:
+    messages = [{"role": "system", "content": config.structured_summary_prompt}]
+    if context_chunks:
+        messages.append({
+            "role": "user",
+            "content": f"Here is helpful background:\n{'\n\n'.join(context_chunks)}"
+        })
+    messages.append({
+        "role": "user",
+        "content": f"Summarize this paper:\n\n{paper_text}"
+    })
+    return messages
+
+@dataclass
+class CompletionResult:
+    content: str
+    cost: float
