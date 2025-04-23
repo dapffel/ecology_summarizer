@@ -11,12 +11,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from tenacity import retry, stop_after_attempt, wait_exponential
 from PyPDF2 import PdfReader
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, validator
 from contextlib import asynccontextmanager
 import re
 from transformers import GPT2TokenizerFast
 from collections import deque
 from asyncio import Lock
+from openai import AsyncOpenAI, OpenAIError, RateLimitError, APIError
+import time
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -45,13 +47,28 @@ class AgentConfig:
         "- **Key Sentence for Research Proposal**:\n\n"
         "Be accurate, concise, and use scientific language."
     )
-    max_reference_docs: int = 10  # Max number of references to embed
+    max_reference_docs: int = 10
     model_price: Dict[ModelType, Tuple[float, float]] = field(
         default_factory=lambda: {
-            ModelType.GPT_4: (0.03, 0.06),      # input, output $ per 1K tokens
-            ModelType.GPT_3_5: (0.0015, 0.002)   # input, output $ per 1K tokens
+            ModelType.GPT_4: (0.03, 0.06),
+            ModelType.GPT_3_5: (0.0015, 0.002)
         }
     )
+
+    def __post_init__(self):
+        if self.max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
+        if not 0 <= self.temperature <= 1:
+            raise ValueError("temperature must be between 0 and 1")
+        if self.embedding_dimension <= 0:
+            raise ValueError("embedding_dimension must be positive")
+        if self.max_reference_docs <= 0:
+            raise ValueError("max_reference_docs must be positive")
+        
+        # Validate model prices
+        for model, (input_rate, output_rate) in self.model_price.items():
+            if input_rate < 0 or output_rate < 0:
+                raise ValueError(f"Model prices for {model} must be non-negative")
 
 class StructuredSummary(BaseModel):
     title: str
@@ -91,28 +108,88 @@ class TextChunk:
     metadata: Dict = field(default_factory=dict)
 
 class VectorMemory:
-    def __init__(self, dimension: int = 1536, max_texts: int = 1000):
+    MAX_TOKENS_PER_CHUNK = 8191  # OpenAI's embedding model limit
+
+    def __init__(self, dimension: int = 1536, max_texts: int = 1000, api_key: Optional[str] = None):
         self.index = faiss.IndexFlatL2(dimension)
         self.texts: deque = deque(maxlen=max_texts)
         self.dimension = dimension
         self.embeddings = np.zeros((0, dimension), dtype=np.float32)
         self._lock = Lock()
+        self._embedding_client = AsyncOpenAI(api_key=api_key)
+
 
     async def _embed(self, text: str) -> np.ndarray:
-        response = await openai.Embedding.acreate(
+        response = await self._embedding_client.embeddings.create(
             model=ModelType.EMBEDDING.value,
             input=text
         )
         logger.info(f"Embedded text of length {len(text)} tokens")
-        return np.array(response["data"][0]["embedding"], dtype=np.float32)
+        return np.array(response.data[0].embedding, dtype=np.float32)
 
-    async def add(self, texts: List[str]):
+    async def add(self, texts: List[str], splitter: Optional["SmartTextSplitter"] = None):
         async with self._lock:
             new_embeddings = []
+            total_chunks = 0
+            skipped_chunks = 0
+
             for text in texts:
-                emb = await self._embed(text)
-                new_embeddings.append(emb)
-                self.texts.append(text)
+                # Use splitter if available
+                chunks = [text]
+                if splitter:
+                    chunks = [chunk.text for chunk in await splitter.split_text(text)]
+
+                for chunk in chunks:
+                    total_chunks += 1
+                    try:
+                        # Use proper token counting if splitter is available
+                        token_count = await splitter.count_tokens(chunk) if splitter else len(chunk.split())
+                        
+                        if token_count > self.MAX_TOKENS_PER_CHUNK:
+                            # Split the chunk into smaller parts
+                            if not splitter:
+                                # Create a temporary splitter if none provided
+                                temp_splitter = SmartTextSplitter(max_tokens=self.MAX_TOKENS_PER_CHUNK)
+                                sub_chunks = [chunk.text for chunk in await temp_splitter.split_text(chunk)]
+                                temp_splitter.cleanup()
+                            else:
+                                sub_chunks = [chunk.text for chunk in await splitter.split_text(chunk)]
+                            
+                            logger.info(f"Splitting large chunk ({token_count} tokens) into {len(sub_chunks)} sub-chunks")
+                            
+                            # Process each sub-chunk
+                            for sub_chunk in sub_chunks:
+                                try:
+                                    emb = await self._embed(sub_chunk)
+                                    new_embeddings.append(emb)
+                                    self.texts.append(sub_chunk)
+                                except Exception as e:
+                                    logger.warning(f"Failed to embed sub-chunk: {e}")
+                                    skipped_chunks += 1
+                            continue
+
+                        emb = await self._embed(chunk)
+                        new_embeddings.append(emb)
+                        self.texts.append(chunk)
+                    except OpenAIError as e:
+                        logger.warning(f"OpenAI error for chunk: {e}")
+                        skipped_chunks += 1
+                    except RateLimitError as e:
+                        logger.error(f"Rate limit exceeded: {e}")
+                        raise
+                    except APIError as e:
+                        logger.error(f"API error: {e}")
+                        raise
+                    except Exception as e:
+                        logger.warning(f"Unexpected error embedding chunk: {e}")
+                        skipped_chunks += 1
+
+            if not new_embeddings:
+                logger.warning("No embeddings added. All chunks failed or were skipped.")
+                return
+
+            logger.info(f"Added {len(new_embeddings)} chunks successfully. "
+                       f"Skipped {skipped_chunks} out of {total_chunks} total chunks.")
 
             new_array = np.vstack(new_embeddings)
             self.embeddings = new_array if self.embeddings.size == 0 else np.vstack([self.embeddings, new_array])
@@ -135,33 +212,51 @@ async def extract_text_from_pdf(pdf_path: str) -> str:
     return text
 
 class SmartTextSplitter:
-    def __init__(self, max_tokens: int = 4000):
+    def __init__(self, max_tokens: int = 250):
         self.max_tokens = max_tokens
         self.tokenizer = None
+        self._tokenizer_lock = asyncio.Lock()
     
-    def _ensure_tokenizer(self):
+    async def _ensure_tokenizer(self):
         if self.tokenizer is None:
-            self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+            try:
+                async with self._tokenizer_lock:
+                    if self.tokenizer is None:  # Double-check pattern
+                        self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+                        logger.info("Tokenizer initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize tokenizer: {e}")
+                raise
     
     def cleanup(self):
         if self.tokenizer:
-            del self.tokenizer
-            self.tokenizer = None
+            try:
+                del self.tokenizer
+                self.tokenizer = None
+                logger.info("Tokenizer cleaned up successfully")
+            except Exception as e:
+                logger.error(f"Error cleaning up tokenizer: {e}")
 
-    def count_tokens(self, text: str) -> int:
-        return len(self.tokenizer.encode(text))
+    async def count_tokens(self, text: str) -> int:
+        await self._ensure_tokenizer()
+        try:
+            return len(self.tokenizer.encode(text))
+        except Exception as e:
+            logger.error(f"Error counting tokens: {e}")
+            # Fallback to word count if tokenizer fails
+            return len(text.split())
 
-    def split_text(self, text: str) -> List[TextChunk]:
+    async def split_text(self, text: str) -> List[TextChunk]:
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         chunks: List[TextChunk] = []
         current_chunk: List[str] = []
         current_count = 0
 
         for para in paragraphs:
-            tokens = self.count_tokens(para)
+            tokens = await self.count_tokens(para)
             if tokens > self.max_tokens:
                 for sent in re.split(r'(?<=[.!?])\s+', para):
-                    stoks = self.count_tokens(sent)
+                    stoks = await self.count_tokens(sent)
                     if current_count + stoks <= self.max_tokens:
                         current_chunk.append(sent)
                         current_count += stoks
@@ -185,15 +280,24 @@ class SmartTextSplitter:
 class SummarizationAgent:
     def __init__(self, config: Optional[AgentConfig] = None):
         self.config = config or AgentConfig()
-        self.text_splitter = SmartTextSplitter(max_tokens=4000)
+        self.text_splitter = SmartTextSplitter(max_tokens=250)
         self._setup()
+        self._chat_client = None
+        self._rate_limit_semaphore = asyncio.Semaphore(1)
+        self._last_api_call = 0
+        self._min_call_interval = 10.0
+        self._token_budget = 5000
+        self._tokens_used = 0
+        self._token_reset_time = time.time()
+        self._token_reset_interval = 60
 
     def _setup(self):
         load_dotenv()
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        if not openai.api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
             raise ValueError("OPENAI_API_KEY is not set in the environment")
-        self.memory = VectorMemory(dimension=self.config.embedding_dimension)
+        self._chat_client = AsyncOpenAI(api_key=api_key)
+        self.memory = VectorMemory(dimension=self.config.embedding_dimension, api_key=api_key)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def summarize_pdf(self, pdf_path: str, reference_texts: List[str], max_cost_usd: float = 1.0) -> StructuredSummary:
@@ -245,13 +349,20 @@ class SummarizationAgent:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if hasattr(self, 'memory'):
-            del self.memory.index
-        if hasattr(self, 'text_splitter'):
-            self.text_splitter.cleanup()
+        try:
+            if hasattr(self, 'memory'):
+                del self.memory.index
+            if hasattr(self, 'text_splitter'):
+                self.text_splitter.cleanup()
+            if self._chat_client:
+                await self._chat_client.close()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            # Don't raise during cleanup to avoid masking original error
 
     async def process_large_text(self, text: str) -> AsyncIterator[TextChunk]:
-        for chunk in self.text_splitter.split_text(text):
+        chunks = await self.text_splitter.split_text(text)
+        for chunk in chunks:
             yield chunk
 
     async def _parse_summary(self, summary_text: str) -> StructuredSummary:
@@ -261,22 +372,110 @@ class SummarizationAgent:
             logger.error(f"Failed to parse summary: {e}")
             raise
 
+    def _estimate_tokens(self, text: str) -> int:
+        """More sophisticated token estimation"""
+        # Count words and characters
+        words = len(text.split())
+        chars = len(text)
+        
+        # Count special tokens (headers, lists, etc.)
+        special_tokens = sum(1 for _ in re.finditer(r'[-*#]', text))
+        
+        # More conservative estimation
+        word_tokens = words * 1.3  # Increased from 1.5 to account for longer words
+        char_tokens = chars / 3.5  # Increased from 4 to be more conservative
+        special_token_count = special_tokens * 2  # Account for special formatting
+        
+        # Take the maximum of the estimates and add special tokens
+        return int(max(word_tokens, char_tokens) + special_token_count)
+
+    def _update_token_budget(self, tokens: int):
+        current_time = time.time()
+        if current_time - self._token_reset_time >= self._token_reset_interval:
+            self._tokens_used = 0
+            self._token_reset_time = current_time
+        
+        # Add 20% buffer to token count
+        tokens_with_buffer = int(tokens * 1.2)
+        
+        self._tokens_used += tokens_with_buffer
+        if self._tokens_used >= self._token_budget:
+            wait_time = self._token_reset_interval - (current_time - self._token_reset_time)
+            if wait_time > 0:
+                logger.info(f"Token budget exceeded, waiting {wait_time:.1f} seconds")
+                time.sleep(wait_time)
+                self._tokens_used = 0
+                self._token_reset_time = time.time()
+
+    async def _rate_limited_api_call(self, coro, estimated_tokens: int = 0):
+        async with self._rate_limit_semaphore:
+            self._update_token_budget(estimated_tokens)
+            
+            current_time = time.time()
+            time_since_last_call = current_time - self._last_api_call
+            if time_since_last_call < self._min_call_interval:
+                await asyncio.sleep(self._min_call_interval - time_since_last_call)
+            
+            try:
+                result = await coro
+                self._last_api_call = time.time()
+                return result
+            except RateLimitError as e:
+                logger.warning(f"Rate limit hit, waiting before retry: {e}")
+                await asyncio.sleep(30)  # Increased from 20 to 30 seconds
+                raise
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _get_completion(self, messages: List[Dict[str, str]]):
-        response = await openai.ChatCompletion.acreate(
-            model=self.config.model.value,
-            messages=messages,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-            stream=False
-        )
-        content = response.choices[0].message.content
-        usage = response.usage
-        prompt_tokens = usage.prompt_tokens
-        completion_tokens = usage.completion_tokens
-        cost = ((prompt_tokens / 1000) * self.config.model_price[self.config.model][0]
-                + (completion_tokens / 1000) * self.config.model_price[self.config.model][1])
-        return CompletionResult(content, cost)
+        try:
+            if not self._chat_client:
+                self._setup()
+                
+            # More accurate token estimation with buffer
+            estimated_tokens = sum(self._estimate_tokens(msg["content"]) for msg in messages)
+            
+            # Add buffer for system message and response
+            estimated_tokens = int(estimated_tokens * 1.2)
+            
+            async def make_request():
+                return await self._chat_client.chat.completions.create(
+                    model=self.config.model.value,
+                    messages=messages,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens
+                )
+            
+            response = await self._rate_limited_api_call(make_request(), estimated_tokens)
+            content = response.choices[0].message.content
+            usage = response.usage
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+            cost = ((prompt_tokens / 1000) * self.config.model_price[self.config.model][0]
+                    + (completion_tokens / 1000) * self.config.model_price[self.config.model][1])
+            return CompletionResult(content, cost)
+        except RateLimitError as e:
+            logger.error(f"Rate limit exceeded: {e}")
+            raise
+        except APIError as e:
+            logger.error(f"OpenAI API error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in _get_completion: {e}")
+            raise
+
+    async def _embed(self, text: str) -> np.ndarray:
+        # More accurate token estimation with buffer
+        estimated_tokens = int(self._estimate_tokens(text) * 1.2)
+        
+        async def make_request():
+            response = await self._embedding_client.embeddings.create(
+                model=ModelType.EMBEDDING.value,
+                input=text
+            )
+            logger.info(f"Embedded text of length {len(text)} tokens")
+            return np.array(response.data[0].embedding, dtype=np.float32)
+        
+        return await self._rate_limited_api_call(make_request(), estimated_tokens)
 
 def build_summarization_prompt(paper_text: str, context_chunks: List[str], config: AgentConfig) -> List[Dict[str, str]]:
     messages = [{"role": "system", "content": config.structured_summary_prompt}]

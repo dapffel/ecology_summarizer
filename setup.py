@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ecology_summarizer",
-    version="0.1.2",
+    version="0.1.5",
     packages=find_packages(),
     install_requires=[
         "openai>=1.0.0",
