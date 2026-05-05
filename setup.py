@@ -2,21 +2,17 @@ from setuptools import setup, find_packages
 
 setup(
     name="ecology_summarizer",
-    version="0.1.5",
+    version="0.2.0",
     packages=find_packages(),
     install_requires=[
-        "openai>=1.0.0",
+        "litellm>=1.0.0",
+        "instructor>=1.0.0",
+        "pymupdf>=1.23.0",
         "faiss-cpu>=1.7.0",
         "numpy>=1.24.0",
-        "python-dotenv>=1.0.0",
-        "tenacity>=8.0.0",
-        "PyPDF2>=3.0.0",
         "pydantic>=2.0.0",
-        "transformers>=4.30.0",
-        "torch>=2.0.0",
-        "python-magic>=0.4.27",
-        "aiofiles>=23.1.0",
-        "typing-extensions>=4.5.0",
+        "langchain-text-splitters>=0.2.0",
+        "python-dotenv>=1.0.0",
     ],
     extras_require={
         "dev": [
@@ -28,7 +24,6 @@ setup(
         ]
     },
     author="Dor Apffel",
-    description="A domain-specific agent for summarizing ecological research papers using GPT",
-    include_package_data=True,
-    python_requires=">=3.8",
+    description="A domain-specific agent for summarizing ecological research papers",
+    python_requires=">=3.10",
 )

@@ -1,7 +1,8 @@
-openai
+litellm
+instructor
+pymupdf
 faiss-cpu
 numpy
+pydantic>=2.0
+langchain-text-splitters
 python-dotenv
-tenacity
-PyPDF2
-pydantic
