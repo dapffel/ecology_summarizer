@@ -1,28 +1,22 @@
 # Ecology Summarizer
 
-A Python package for generating structured summaries of ecological research papers. Provider-agnostic — works with OpenAI, Anthropic, Cohere, Gemini, or any LiteLLM-supported model.
+Structured summaries of ecological research papers from PDFs. Provider-agnostic via [LiteLLM](https://github.com/BerriAI/litellm).
 
-## Installation
+## Install
 
 ```bash
-git clone https://github.com/dapffel/ecology_summarizer.git
-cd ecology_summarizer
 pip install .
 ```
 
 ## Setup
 
-Set your API key in a `.env` file:
+Add your API key to `.env`:
 
 ```
 OPENAI_API_KEY=sk-...
 ```
 
-Or for other providers:
-```
-ANTHROPIC_API_KEY=sk-ant-...
-GEMINI_API_KEY=...
-```
+Any LiteLLM-supported provider works — just set the relevant key (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, etc).
 
 ## Usage
 
@@ -39,33 +33,22 @@ async def main():
 asyncio.run(main())
 ```
 
-### Custom provider
+Switch providers by changing the model string:
 
 ```python
-config = AgentConfig(
-    model="anthropic/claude-sonnet-4-6",
-    embedding_model="text-embedding-ada-002",
-    temperature=0.3,
-)
+config = AgentConfig(model="anthropic/claude-sonnet-4-6")
 agent = SummarizationAgent(config)
 ```
 
-### With reference documents
+Pass reference documents for context-aware summaries:
 
 ```python
-references = [
-    "Smith et al. 2023 found that forest fragmentation...",
-    "Johnson 2022 showed biodiversity metrics...",
-]
-summary = await agent.summarize_pdf("paper.pdf", references=references)
+summary = await agent.summarize_pdf(
+    "paper.pdf",
+    references=["Smith et al. 2023 found that..."]
+)
 ```
 
 ## Output
 
-Returns a `StructuredSummary` with fields:
-- `title`
-- `study_context`
-- `methods`
-- `key_findings`
-- `ecological_implications`
-- `key_sentence` — one-sentence summary for research proposals
+`StructuredSummary` with fields: `title`, `study_context`, `methods`, `key_findings`, `ecological_implications`, `key_sentence`.
