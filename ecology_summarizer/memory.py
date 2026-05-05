@@ -5,10 +5,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class VectorMemory:
-    def __init__(self, model: str = "text-embedding-ada-002", chunk_size: int = 1000):
+    def __init__(self, model: str = "text-embedding-ada-002", chunk_size: int = 1000, chunk_overlap: int = 200):
         self.model = model
         self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size, chunk_overlap=200
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
         self.texts: list[str] = []
         self.index: faiss.IndexFlatL2 | None = None

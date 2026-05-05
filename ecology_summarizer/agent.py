@@ -1,8 +1,7 @@
 import instructor
 import litellm
-from dataclasses import dataclass, field
 
-from .models import StructuredSummary
+from .models import AgentConfig, StructuredSummary
 from .memory import VectorMemory
 from .pdf import extract_text
 
@@ -13,15 +12,6 @@ SYSTEM_PROMPT = (
 )
 
 
-@dataclass
-class AgentConfig:
-    model: str = "gpt-4"
-    embedding_model: str = "text-embedding-ada-002"
-    temperature: float = 0.5
-    max_reference_docs: int = 10
-    chunk_size: int = 1000
-
-
 class SummarizationAgent:
     def __init__(self, config: AgentConfig | None = None):
         self.config = config or AgentConfig()
@@ -29,6 +19,7 @@ class SummarizationAgent:
         self.memory = VectorMemory(
             model=self.config.embedding_model,
             chunk_size=self.config.chunk_size,
+            chunk_overlap=self.config.chunk_overlap,
         )
 
     async def summarize_pdf(

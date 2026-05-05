@@ -1,5 +1,5 @@
-from .agent import SummarizationAgent, AgentConfig
-from .models import StructuredSummary
+from .agent import SummarizationAgent
+from .models import AgentConfig, StructuredSummary
 
 __all__ = [
     "SummarizationAgent",
