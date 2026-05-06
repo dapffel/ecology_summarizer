@@ -8,6 +8,7 @@ class AgentConfig(BaseModel):
     max_reference_docs: int = Field(default=10, gt=0)
     chunk_size: int = Field(default=1000, gt=0)
     chunk_overlap: int = Field(default=200, ge=0)
+    max_input_chars: int = Field(default=100_000, gt=0)
 
 
 class StructuredSummary(BaseModel):

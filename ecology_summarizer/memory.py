@@ -1,11 +1,16 @@
-import numpy as np
 import faiss
 import litellm
+import numpy as np
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class VectorMemory:
-    def __init__(self, model: str = "text-embedding-ada-002", chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(
+        self,
+        model: str = "text-embedding-ada-002",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+    ):
         self.model = model
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size, chunk_overlap=chunk_overlap

@@ -1,8 +1,8 @@
 import instructor
 import litellm
 
-from .models import AgentConfig, StructuredSummary
 from .memory import VectorMemory
+from .models import AgentConfig, StructuredSummary
 from .pdf import extract_text
 
 SYSTEM_PROMPT = (
@@ -16,22 +16,25 @@ class SummarizationAgent:
     def __init__(self, config: AgentConfig | None = None):
         self.config = config or AgentConfig()
         self.client = instructor.from_litellm(litellm.acompletion)
-        self.memory = VectorMemory(
-            model=self.config.embedding_model,
-            chunk_size=self.config.chunk_size,
-            chunk_overlap=self.config.chunk_overlap,
-        )
 
     async def summarize_pdf(
         self, pdf_path: str, references: list[str] | None = None
     ) -> StructuredSummary:
-        text = extract_text(pdf_path)
+        text = extract_text(pdf_path).strip()
+        if not text:
+            raise ValueError("PDF contains no extractable text")
+        text = text[: self.config.max_input_chars]
 
+        context = ""
         if references:
-            await self.memory.add(references[: self.config.max_reference_docs])
-
-        context_chunks = await self.memory.query(text[:500])
-        context = "\n\n".join(context_chunks) if context_chunks else ""
+            memory = VectorMemory(
+                model=self.config.embedding_model,
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
+            )
+            await memory.add(references[: self.config.max_reference_docs])
+            context_chunks = await memory.query(text[:500])
+            context = "\n\n".join(context_chunks)
 
         user_content = f"Paper:\n\n{text}"
         if context:

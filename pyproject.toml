@@ -38,3 +38,7 @@ line-length = 100
 [tool.isort]
 profile = "black"
 line_length = 100
+
+[[tool.mypy.overrides]]
+module = ["fitz", "faiss"]
+ignore_missing_imports = true
