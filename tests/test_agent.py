@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ecology_summarizer import AgentConfig, StructuredSummary, SummarizationAgent
+from ecology_summarizer.agent import _retrieval_query
 
 FAKE_SUMMARY = StructuredSummary(
     title="Effects of Urbanization on Pollinator Networks",
@@ -14,13 +15,6 @@ FAKE_SUMMARY = StructuredSummary(
 )
 
 FAKE_TEXT = "Fake paper content about pollinators and urban ecology."
-
-
-def _make_agent(**config_overrides):
-    with patch("ecology_summarizer.agent.instructor") as mock_inst:
-        mock_inst.from_litellm.return_value.create = AsyncMock(return_value=FAKE_SUMMARY)
-        agent = SummarizationAgent(AgentConfig(**config_overrides))
-    return agent
 
 
 @patch("ecology_summarizer.agent.extract_text", return_value=FAKE_TEXT)
@@ -81,8 +75,33 @@ async def test_long_text_truncated(mock_instructor, mock_extract):
 
     call_args = mock_create.call_args
     user_msg = call_args.kwargs["messages"][1]["content"]
-    paper_text = user_msg.split("Paper:\n\n")[1]
-    assert len(paper_text) == 100
+    assert len(user_msg) == 100
+
+
+@patch("ecology_summarizer.agent.extract_text")
+@patch("ecology_summarizer.agent.instructor")
+async def test_prompt_with_context_respects_max_input_chars(mock_instructor, mock_extract):
+    mock_create = AsyncMock(return_value=FAKE_SUMMARY)
+    mock_instructor.from_litellm.return_value.create = mock_create
+    mock_extract.return_value = "x" * 5000
+
+    agent = SummarizationAgent(AgentConfig(max_input_chars=200))
+
+    with patch("ecology_summarizer.agent.VectorMemory") as mock_memory_cls:
+        mock_memory = AsyncMock()
+        mock_memory.query.return_value = ["context " * 20]
+        mock_memory_cls.return_value = mock_memory
+
+        await agent.summarize_pdf("big.pdf", references=["ref1"])
+
+    user_msg = mock_create.call_args.kwargs["messages"][1]["content"]
+    assert len(user_msg) == 200
+
+
+def test_retrieval_query_uses_first_substantial_paragraph():
+    text = "Title\n\nShort.\n\n" + ("This paragraph has enough ecological detail. " * 4)
+    query = _retrieval_query(text)
+    assert query.startswith("This paragraph")
 
 
 @patch("ecology_summarizer.pdf.fitz")

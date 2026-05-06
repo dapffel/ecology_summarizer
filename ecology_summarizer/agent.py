@@ -1,15 +1,45 @@
 import instructor
 import litellm
+from dotenv import load_dotenv
 
 from .memory import VectorMemory
 from .models import AgentConfig, StructuredSummary
 from .pdf import extract_text
+
+load_dotenv()
 
 SYSTEM_PROMPT = (
     "You are an expert ecological researcher and scientific writer. "
     "Summarize the following ecological research paper accurately and concisely, "
     "using scientific language."
 )
+
+PAPER_PREFIX = "Paper:\n\n"
+CONTEXT_PREFIX = "Relevant background:\n"
+QUERY_CHARS = 500
+MIN_PARAGRAPH_CHARS = 80
+
+
+def _retrieval_query(text: str) -> str:
+    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n")]
+    for paragraph in paragraphs:
+        if len(paragraph) >= MIN_PARAGRAPH_CHARS:
+            return paragraph[:QUERY_CHARS]
+    return text[:QUERY_CHARS]
+
+
+def _build_user_content(text: str, context: str, max_chars: int) -> str:
+    if not context:
+        return f"{PAPER_PREFIX}{text}"[:max_chars]
+
+    prefix = f"{CONTEXT_PREFIX}{context}\n\n{PAPER_PREFIX}"
+    available = max_chars - len(prefix)
+    if available <= 0:
+        context_budget = max_chars - len(CONTEXT_PREFIX) - len(f"\n\n{PAPER_PREFIX}")
+        context = context[: max(0, context_budget)]
+        return f"{CONTEXT_PREFIX}{context}\n\n{PAPER_PREFIX}"[:max_chars]
+
+    return f"{prefix}{text[:available]}"
 
 
 class SummarizationAgent:
@@ -23,7 +53,6 @@ class SummarizationAgent:
         text = extract_text(pdf_path).strip()
         if not text:
             raise ValueError("PDF contains no extractable text")
-        text = text[: self.config.max_input_chars]
 
         context = ""
         if references:
@@ -33,12 +62,10 @@ class SummarizationAgent:
                 chunk_overlap=self.config.chunk_overlap,
             )
             await memory.add(references[: self.config.max_reference_docs])
-            context_chunks = await memory.query(text[:500])
+            context_chunks = await memory.query(_retrieval_query(text))
             context = "\n\n".join(context_chunks)
 
-        user_content = f"Paper:\n\n{text}"
-        if context:
-            user_content = f"Relevant background:\n{context}\n\n{user_content}"
+        user_content = _build_user_content(text, context, self.config.max_input_chars)
 
         return await self.client.create(
             model=self.config.model,
