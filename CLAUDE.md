@@ -16,7 +16,7 @@ pytest                              # run all tests
 pytest tests/test_foo.py::test_bar  # run a single test
 black .                             # format
 isort .                             # sort imports
-mypy ecology_summarizer/            # type check
+mypy lit_review/                    # type check
 ```
 
 ## Environment

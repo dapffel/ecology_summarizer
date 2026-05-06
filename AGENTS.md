@@ -16,7 +16,7 @@ pytest                              # run all tests
 pytest tests/test_foo.py::test_bar  # run a single test
 black .                             # format
 isort .                             # sort imports
-mypy ecology_summarizer/            # type check
+mypy lit_review/                    # type check
 ```
 
 ## Environment
@@ -32,4 +32,4 @@ Single agent that summarizes ecological research PDFs into a validated Pydantic 
 - **`memory.py`** — `VectorMemory` wraps FAISS for in-memory vector search. Embeds via `litellm.aembedding()`, splits text via `langchain-text-splitters`.
 - **`pdf.py`** — PDF text extraction via PyMuPDF.
 
-Provider-agnostic: pass any LiteLLM model string (e.g. `"gpt-4"`, `"anthropic/Codex-sonnet-4-6"`, `"gemini/gemini-pro"`) in `AgentConfig.model`.
+Provider-agnostic: pass any LiteLLM model string (e.g. `"gpt-4"`, `"anthropic/claude-sonnet-4-6"`, `"gemini/gemini-pro"`) in `AgentConfig.model`.

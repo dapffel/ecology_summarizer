@@ -1,4 +1,4 @@
-# Ecology Summarizer
+# lit-review
 
 Structured summaries of ecological research papers from PDFs. Provider-agnostic via [LiteLLM](https://github.com/BerriAI/litellm).
 
@@ -15,7 +15,7 @@ pip install -e ".[dev]"
 pytest
 black .
 isort .
-mypy ecology_summarizer/
+mypy lit_review/
 ```
 
 ## Setup
@@ -32,7 +32,7 @@ Any LiteLLM-supported provider works — just set the relevant key (`ANTHROPIC_A
 
 ```python
 import asyncio
-from ecology_summarizer import SummarizationAgent, AgentConfig
+from lit_review import SummarizationAgent, AgentConfig
 
 async def main():
     agent = SummarizationAgent()

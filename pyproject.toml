@@ -3,8 +3,8 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ecology_summarizer"
-version = "0.2.1"
+name = "lit-review"
+version = "0.3.0"
 description = "Structured summaries of ecological research papers from PDFs"
 authors = [{ name = "Dor Apffel" }]
 requires-python = ">=3.10"

@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ecology_summarizer import AgentConfig, StructuredSummary, SummarizationAgent
-from ecology_summarizer.agent import _retrieval_query
+from lit_review import AgentConfig, StructuredSummary, SummarizationAgent
+from lit_review.agent import _retrieval_query
 
 FAKE_SUMMARY = StructuredSummary(
     title="Effects of Urbanization on Pollinator Networks",
@@ -17,15 +17,15 @@ FAKE_SUMMARY = StructuredSummary(
 FAKE_TEXT = "Fake paper content about pollinators and urban ecology."
 
 
-@patch("ecology_summarizer.agent.extract_text", return_value=FAKE_TEXT)
-@patch("ecology_summarizer.agent.instructor")
+@patch("lit_review.agent.extract_text", return_value=FAKE_TEXT)
+@patch("lit_review.agent.instructor")
 async def test_summarize_pdf_with_references(mock_instructor, mock_extract):
     mock_create = AsyncMock(return_value=FAKE_SUMMARY)
     mock_instructor.from_litellm.return_value.create = mock_create
 
     agent = SummarizationAgent()
 
-    with patch("ecology_summarizer.agent.VectorMemory") as mock_memory_cls:
+    with patch("lit_review.agent.VectorMemory") as mock_memory_cls:
         mock_memory = AsyncMock()
         mock_memory.query.return_value = ["relevant context"]
         mock_memory_cls.return_value = mock_memory
@@ -39,15 +39,15 @@ async def test_summarize_pdf_with_references(mock_instructor, mock_extract):
     mock_create.assert_called_once()
 
 
-@patch("ecology_summarizer.agent.extract_text", return_value=FAKE_TEXT)
-@patch("ecology_summarizer.agent.instructor")
+@patch("lit_review.agent.extract_text", return_value=FAKE_TEXT)
+@patch("lit_review.agent.instructor")
 async def test_summarize_pdf_no_references(mock_instructor, mock_extract):
     mock_create = AsyncMock(return_value=FAKE_SUMMARY)
     mock_instructor.from_litellm.return_value.create = mock_create
 
     agent = SummarizationAgent()
 
-    with patch("ecology_summarizer.agent.VectorMemory") as mock_memory_cls:
+    with patch("lit_review.agent.VectorMemory") as mock_memory_cls:
         summary = await agent.summarize_pdf("fake.pdf")
 
     assert summary.title == "Effects of Urbanization on Pollinator Networks"
@@ -55,16 +55,16 @@ async def test_summarize_pdf_no_references(mock_instructor, mock_extract):
     mock_create.assert_called_once()
 
 
-@patch("ecology_summarizer.agent.extract_text", return_value="")
-@patch("ecology_summarizer.agent.instructor")
+@patch("lit_review.agent.extract_text", return_value="")
+@patch("lit_review.agent.instructor")
 async def test_empty_pdf_raises(mock_instructor, mock_extract):
     agent = SummarizationAgent()
     with pytest.raises(ValueError, match="no extractable text"):
         await agent.summarize_pdf("empty.pdf")
 
 
-@patch("ecology_summarizer.agent.extract_text")
-@patch("ecology_summarizer.agent.instructor")
+@patch("lit_review.agent.extract_text")
+@patch("lit_review.agent.instructor")
 async def test_long_text_truncated(mock_instructor, mock_extract):
     mock_create = AsyncMock(return_value=FAKE_SUMMARY)
     mock_instructor.from_litellm.return_value.create = mock_create
@@ -78,8 +78,8 @@ async def test_long_text_truncated(mock_instructor, mock_extract):
     assert len(user_msg) == 100
 
 
-@patch("ecology_summarizer.agent.extract_text")
-@patch("ecology_summarizer.agent.instructor")
+@patch("lit_review.agent.extract_text")
+@patch("lit_review.agent.instructor")
 async def test_prompt_with_context_respects_max_input_chars(mock_instructor, mock_extract):
     mock_create = AsyncMock(return_value=FAKE_SUMMARY)
     mock_instructor.from_litellm.return_value.create = mock_create
@@ -87,7 +87,7 @@ async def test_prompt_with_context_respects_max_input_chars(mock_instructor, moc
 
     agent = SummarizationAgent(AgentConfig(max_input_chars=200))
 
-    with patch("ecology_summarizer.agent.VectorMemory") as mock_memory_cls:
+    with patch("lit_review.agent.VectorMemory") as mock_memory_cls:
         mock_memory = AsyncMock()
         mock_memory.query.return_value = ["context " * 20]
         mock_memory_cls.return_value = mock_memory
@@ -104,7 +104,7 @@ def test_retrieval_query_uses_first_substantial_paragraph():
     assert query.startswith("This paragraph")
 
 
-@patch("ecology_summarizer.pdf.fitz")
+@patch("lit_review.pdf.fitz")
 def test_pdf_document_closed(mock_fitz):
     mock_doc = MagicMock()
     mock_doc.__enter__ = MagicMock(return_value=mock_doc)
@@ -112,7 +112,7 @@ def test_pdf_document_closed(mock_fitz):
     mock_doc.__iter__ = MagicMock(return_value=iter([]))
     mock_fitz.open.return_value = mock_doc
 
-    from ecology_summarizer.pdf import extract_text
+    from lit_review.pdf import extract_text
 
     extract_text("test.pdf")
     mock_doc.__exit__.assert_called_once()
