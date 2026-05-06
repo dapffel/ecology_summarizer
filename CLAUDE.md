@@ -28,7 +28,7 @@ Set provider API keys in `.env` at the project root (loaded via python-dotenv). 
 Single agent that summarizes ecological research PDFs into a validated Pydantic model.
 
 - **`agent.py`** — `SummarizationAgent` orchestrates the pipeline: extract PDF text, optionally retrieve context from vector memory, call LLM via Instructor+LiteLLM to get a `StructuredSummary` directly (no regex parsing).
-- **`models.py`** — Pydantic v2 `StructuredSummary` model. Field descriptions guide the LLM's structured output.
+- **`models.py`** — Pydantic v2 `AgentConfig` and `StructuredSummary`. Field descriptions guide the LLM's structured output.
 - **`memory.py`** — `VectorMemory` wraps FAISS for in-memory vector search. Embeds via `litellm.aembedding()`, splits text via `langchain-text-splitters`.
 - **`pdf.py`** — PDF text extraction via PyMuPDF.
 

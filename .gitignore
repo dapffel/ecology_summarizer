@@ -1,9 +1,10 @@
-# Byte‑compiled / cache
+# Byte-compiled / cache
 __pycache__/
 *.py[cod]
 
 # Environment
 .env
+.venv/
 
 # Package artifacts
 *.egg-info/

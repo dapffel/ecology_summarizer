@@ -1,3 +1,40 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecology_summarizer"
+version = "0.2.1"
+description = "Structured summaries of ecological research papers from PDFs"
+authors = [{ name = "Dor Apffel" }]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "litellm>=1.0.0",
+    "instructor>=1.0.0",
+    "pymupdf>=1.23.0",
+    "faiss-cpu>=1.7.0",
+    "numpy>=1.24.0",
+    "pydantic>=2.0.0",
+    "langchain-text-splitters>=0.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100
