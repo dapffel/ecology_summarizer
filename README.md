@@ -39,9 +39,9 @@ from lit_review import SDMExtractionAgent, AgentConfig
 async def main():
     agent = SDMExtractionAgent()
     result = await agent.extract_from_pdf("paper.pdf")
-    print(result.title)
-    print(result.algorithm)
-    print(result.evaluation_metrics)
+    print(result.study.title)
+    print(result.model.algorithm.value)
+    print(result.evaluation.metrics.value)
 
 asyncio.run(main())
 ```
@@ -75,8 +75,23 @@ result = await agent.extract_from_pdf(
 
 References are used only for the current `extract_from_pdf()` call; memory is not persisted across extractions.
 
+Run a verification pass to cross-check extracted values against the source PDF:
+
+```python
+evaluation = await agent.evaluate(result, "paper.pdf")
+print(evaluation.num_verified)
+print(evaluation.overall_assessment)
+```
+
 ## Output
 
-`SDMRequirements` with fields: `title`, `species`, `geographic_extent`, `occurrence_type`, `sample_size`, `occurrence_source`, `environmental_variables`, `environmental_source`, `spatial_resolution`, `algorithm`, `software`, `hyperparameters`, `evaluation_metrics`, `cv_strategy`, `threshold_method`, `performance_values`, `key_predictors`, `predicted_distribution`.
+`SDMRequirements` is grouped into methodology sections:
 
-All fields except `title` are optional (`str | None`) since papers vary in what they report.
+- `study` — title, species, geographic extent
+- `occurrence` — occurrence type, sample size, occurrence source
+- `predictors` — environmental variables, data source, spatial resolution
+- `model` — algorithm, software, hyperparameters
+- `evaluation` — metrics, cross-validation, thresholding, performance values
+- `results` — key predictors and predicted distribution
+
+Most extracted methodology items are `ExtractedField` objects with `value`, `evidence`, `section`, and `page`. Use `value` for downstream virtual species workflows and `evidence` to audit where the value came from. Missing details are represented as `value=None` since papers vary in what they report.

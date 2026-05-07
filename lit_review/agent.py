@@ -1,31 +1,24 @@
+import json
+from typing import Any
+
 import instructor
 import litellm
 from dotenv import load_dotenv
 
 from .memory import VectorMemory
-from .models import AgentConfig, SDMRequirements
+from .models import AgentConfig, ExtractionEval, SDMRequirements
 from .pdf import extract_text
+from .prompts import (
+    EVAL_EXTRACTION_PREFIX,
+    EVAL_PAPER_PREFIX,
+    EVAL_SYSTEM,
+    EXTRACTION_CONTEXT_PREFIX,
+    EXTRACTION_PAPER_PREFIX,
+    EXTRACTION_SYSTEM,
+)
 
 load_dotenv()
 
-SYSTEM_PROMPT = (
-    "You are an expert in species distribution modeling (SDM) and ecological niche modeling. "
-    "Your task is to extract structured technical requirements from the provided research paper. "
-    "Focus specifically on the methodological details needed to reproduce the SDM analysis: "
-    "species identity, occurrence data characteristics, environmental predictors, "
-    "modeling algorithm and settings, evaluation strategy, and key results.\n\n"
-    "Extraction guidelines:\n"
-    "- Be precise: use exact numbers, variable names, and software versions from the paper.\n"
-    "- If the paper reports multiple models, focus on the best-performing or recommended model.\n"
-    "- If a detail is not mentioned in the paper, return null for that field rather than guessing.\n"
-    "- For environmental variables, distinguish between candidate variables and those retained "
-    "after selection.\n"
-    "- For ensemble models, list all component algorithms.\n"
-    "- Include units where relevant (e.g., spatial resolution in meters or arc-seconds)."
-)
-
-PAPER_PREFIX = "SDM Paper:\n\n"
-CONTEXT_PREFIX = "Reference SDM methodology context:\n"
 QUERY_CHARS = 500
 MIN_PARAGRAPH_CHARS = 80
 
@@ -38,18 +31,45 @@ def _retrieval_query(text: str) -> str:
     return text[:QUERY_CHARS]
 
 
-def _build_user_content(text: str, context: str, max_chars: int) -> str:
+def _build_extraction_content(text: str, context: str, max_chars: int) -> str:
     if not context:
-        return f"{PAPER_PREFIX}{text}"[:max_chars]
+        return f"{EXTRACTION_PAPER_PREFIX}{text}"[:max_chars]
 
-    prefix = f"{CONTEXT_PREFIX}{context}\n\n{PAPER_PREFIX}"
+    prefix = f"{EXTRACTION_CONTEXT_PREFIX}{context}\n\n{EXTRACTION_PAPER_PREFIX}"
     available = max_chars - len(prefix)
     if available <= 0:
-        context_budget = max_chars - len(CONTEXT_PREFIX) - len(f"\n\n{PAPER_PREFIX}")
+        context_budget = (
+            max_chars - len(EXTRACTION_CONTEXT_PREFIX) - len(f"\n\n{EXTRACTION_PAPER_PREFIX}")
+        )
         context = context[: max(0, context_budget)]
-        return f"{CONTEXT_PREFIX}{context}\n\n{PAPER_PREFIX}"[:max_chars]
+        return f"{EXTRACTION_CONTEXT_PREFIX}{context}\n\n{EXTRACTION_PAPER_PREFIX}"[:max_chars]
 
     return f"{prefix}{text[:available]}"
+
+
+def _build_eval_content(requirements_json: str, paper_text: str, max_chars: int) -> str:
+    prefix = f"{EVAL_EXTRACTION_PREFIX}{requirements_json}{EVAL_PAPER_PREFIX}"
+    available = max_chars - len(prefix)
+    if available <= 0:
+        return prefix[:max_chars]
+    return f"{prefix}{paper_text[:available]}"
+
+
+def _drop_empty_items(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned = {
+            key: cleaned_value
+            for key, item in value.items()
+            if (cleaned_value := _drop_empty_items(item)) not in ({}, [], None)
+        }
+        return cleaned
+    if isinstance(value, list):
+        return [
+            cleaned_item
+            for item in value
+            if (cleaned_item := _drop_empty_items(item)) not in ({}, [], None)
+        ]
+    return value
 
 
 class SDMExtractionAgent:
@@ -75,13 +95,34 @@ class SDMExtractionAgent:
             context_chunks = await memory.query(_retrieval_query(text))
             context = "\n\n".join(context_chunks)
 
-        user_content = _build_user_content(text, context, self.config.max_input_chars)
+        user_content = _build_extraction_content(text, context, self.config.max_input_chars)
 
         return await self.client.create(
             model=self.config.model,
             response_model=SDMRequirements,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": EXTRACTION_SYSTEM},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=self.config.temperature,
+        )
+
+    async def evaluate(self, requirements: SDMRequirements, pdf_path: str) -> ExtractionEval:
+        text = extract_text(pdf_path).strip()
+        if not text:
+            raise ValueError("PDF contains no extractable text")
+
+        requirements_json = json.dumps(
+            _drop_empty_items(requirements.model_dump(exclude_none=True)),
+            indent=2,
+        )
+        user_content = _build_eval_content(requirements_json, text, self.config.max_input_chars)
+
+        return await self.client.create(
+            model=self.config.model,
+            response_model=ExtractionEval,
+            messages=[
+                {"role": "system", "content": EVAL_SYSTEM},
                 {"role": "user", "content": user_content},
             ],
             temperature=self.config.temperature,
