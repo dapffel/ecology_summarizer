@@ -1,8 +1,8 @@
-from .agent import SummarizationAgent
-from .models import AgentConfig, StructuredSummary
+from .agent import SDMExtractionAgent
+from .models import AgentConfig, SDMRequirements
 
 __all__ = [
-    "SummarizationAgent",
+    "SDMExtractionAgent",
     "AgentConfig",
-    "StructuredSummary",
+    "SDMRequirements",
 ]

@@ -1,6 +1,8 @@
 # lit-review
 
-Structured summaries of ecological research papers from PDFs. Provider-agnostic via [LiteLLM](https://github.com/BerriAI/litellm).
+Structured SDM requirements extraction from research PDFs. Provider-agnostic via [LiteLLM](https://github.com/BerriAI/litellm).
+
+Extracts species distribution modeling methodology from papers into a structured format suitable for driving virtual species experiments.
 
 ## Install
 
@@ -32,13 +34,14 @@ Any LiteLLM-supported provider works — just set the relevant key (`ANTHROPIC_A
 
 ```python
 import asyncio
-from lit_review import SummarizationAgent, AgentConfig
+from lit_review import SDMExtractionAgent, AgentConfig
 
 async def main():
-    agent = SummarizationAgent()
-    summary = await agent.summarize_pdf("paper.pdf")
-    print(summary.title)
-    print(summary.key_sentence)
+    agent = SDMExtractionAgent()
+    result = await agent.extract_from_pdf("paper.pdf")
+    print(result.title)
+    print(result.algorithm)
+    print(result.evaluation_metrics)
 
 asyncio.run(main())
 ```
@@ -47,7 +50,7 @@ Switch providers by changing the model string:
 
 ```python
 config = AgentConfig(model="anthropic/claude-sonnet-4-6")
-agent = SummarizationAgent(config)
+agent = SDMExtractionAgent(config)
 ```
 
 Limit prompt size or customize embeddings through `AgentConfig`:
@@ -58,20 +61,22 @@ config = AgentConfig(
     embedding_model="text-embedding-ada-002",
     max_input_chars=100_000,
 )
-agent = SummarizationAgent(config)
+agent = SDMExtractionAgent(config)
 ```
 
-Pass reference documents for context-aware summaries:
+Pass reference documents for context-aware extraction:
 
 ```python
-summary = await agent.summarize_pdf(
+result = await agent.extract_from_pdf(
     "paper.pdf",
-    references=["Smith et al. 2023 found that..."]
+    references=["Smith et al. 2023 used MaxEnt with spatial block CV..."]
 )
 ```
 
-References are used only for the current `summarize_pdf()` call; memory is not persisted across summaries.
+References are used only for the current `extract_from_pdf()` call; memory is not persisted across extractions.
 
 ## Output
 
-`StructuredSummary` with fields: `title`, `study_context`, `methods`, `key_findings`, `ecological_implications`, `key_sentence`.
+`SDMRequirements` with fields: `title`, `species`, `geographic_extent`, `occurrence_type`, `sample_size`, `occurrence_source`, `environmental_variables`, `environmental_source`, `spatial_resolution`, `algorithm`, `software`, `hyperparameters`, `evaluation_metrics`, `cv_strategy`, `threshold_method`, `performance_values`, `key_predictors`, `predicted_distribution`.
+
+All fields except `title` are optional (`str | None`) since papers vary in what they report.

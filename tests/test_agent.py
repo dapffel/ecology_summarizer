@@ -2,37 +2,50 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from lit_review import AgentConfig, StructuredSummary, SummarizationAgent
+from lit_review import AgentConfig, SDMExtractionAgent, SDMRequirements
 from lit_review.agent import _retrieval_query
 
-FAKE_SUMMARY = StructuredSummary(
-    title="Effects of Urbanization on Pollinator Networks",
-    study_context="Urban expansion disrupts plant-pollinator interactions.",
-    methods="Field surveys across an urban-rural gradient with network analysis.",
-    key_findings="Urban sites showed 40% lower network connectivity.",
-    ecological_implications="Urban planning should preserve pollinator corridors.",
-    key_sentence="Urbanization significantly reduces pollinator network connectivity.",
+FAKE_REQUIREMENTS = SDMRequirements(
+    title="Predicting Habitat Suitability for Quercus robur Under Climate Change",
+    species="Quercus robur",
+    geographic_extent="Western Europe (35-60N, 10W-25E)",
+    occurrence_type="presence-absence",
+    sample_size="1,247 presence / 3,000 pseudo-absence",
+    occurrence_source="GBIF, national forest inventories",
+    environmental_variables="BIO1, BIO12, BIO15, elevation, soil pH",
+    environmental_source="WorldClim v2.1, SoilGrids 250m",
+    spatial_resolution="30 arc-seconds (~1 km)",
+    algorithm="MaxEnt",
+    software="R dismo package v1.3-9",
+    hyperparameters="regularization multiplier = 1.5, feature classes = LQH, background points = 10000",
+    evaluation_metrics="AUC = 0.92, TSS = 0.81",
+    cv_strategy="Spatial block cross-validation, 5 folds",
+    threshold_method="Maximum sensitivity + specificity",
+    performance_values="Mean AUC = 0.92 +/- 0.03 across folds",
+    key_predictors="BIO1 (mean annual temperature) and BIO12 (annual precipitation) contributed 72% of model gain",
+    predicted_distribution="Suitable habitat projected to decline 35% under SSP5-8.5 by 2070, shifting northward into Scandinavia",
 )
 
-FAKE_TEXT = "Fake paper content about pollinators and urban ecology."
+FAKE_TEXT = "Fake paper content about oak species distribution modeling."
 
 
 @patch("lit_review.agent.extract_text", return_value=FAKE_TEXT)
 @patch("lit_review.agent.instructor")
-async def test_summarize_pdf_with_references(mock_instructor, mock_extract):
-    mock_create = AsyncMock(return_value=FAKE_SUMMARY)
+async def test_extract_from_pdf_with_references(mock_instructor, mock_extract):
+    mock_create = AsyncMock(return_value=FAKE_REQUIREMENTS)
     mock_instructor.from_litellm.return_value.create = mock_create
 
-    agent = SummarizationAgent()
+    agent = SDMExtractionAgent()
 
     with patch("lit_review.agent.VectorMemory") as mock_memory_cls:
         mock_memory = AsyncMock()
         mock_memory.query.return_value = ["relevant context"]
         mock_memory_cls.return_value = mock_memory
 
-        summary = await agent.summarize_pdf("fake.pdf", references=["ref1"])
+        result = await agent.extract_from_pdf("fake.pdf", references=["ref1"])
 
-    assert summary.title == "Effects of Urbanization on Pollinator Networks"
+    assert result.title == "Predicting Habitat Suitability for Quercus robur Under Climate Change"
+    assert result.species == "Quercus robur"
     mock_extract.assert_called_once_with("fake.pdf")
     mock_memory.add.assert_called_once()
     mock_memory.query.assert_called_once()
@@ -41,16 +54,16 @@ async def test_summarize_pdf_with_references(mock_instructor, mock_extract):
 
 @patch("lit_review.agent.extract_text", return_value=FAKE_TEXT)
 @patch("lit_review.agent.instructor")
-async def test_summarize_pdf_no_references(mock_instructor, mock_extract):
-    mock_create = AsyncMock(return_value=FAKE_SUMMARY)
+async def test_extract_from_pdf_no_references(mock_instructor, mock_extract):
+    mock_create = AsyncMock(return_value=FAKE_REQUIREMENTS)
     mock_instructor.from_litellm.return_value.create = mock_create
 
-    agent = SummarizationAgent()
+    agent = SDMExtractionAgent()
 
     with patch("lit_review.agent.VectorMemory") as mock_memory_cls:
-        summary = await agent.summarize_pdf("fake.pdf")
+        result = await agent.extract_from_pdf("fake.pdf")
 
-    assert summary.title == "Effects of Urbanization on Pollinator Networks"
+    assert result.title == "Predicting Habitat Suitability for Quercus robur Under Climate Change"
     mock_memory_cls.assert_not_called()
     mock_create.assert_called_once()
 
@@ -58,20 +71,20 @@ async def test_summarize_pdf_no_references(mock_instructor, mock_extract):
 @patch("lit_review.agent.extract_text", return_value="")
 @patch("lit_review.agent.instructor")
 async def test_empty_pdf_raises(mock_instructor, mock_extract):
-    agent = SummarizationAgent()
+    agent = SDMExtractionAgent()
     with pytest.raises(ValueError, match="no extractable text"):
-        await agent.summarize_pdf("empty.pdf")
+        await agent.extract_from_pdf("empty.pdf")
 
 
 @patch("lit_review.agent.extract_text")
 @patch("lit_review.agent.instructor")
 async def test_long_text_truncated(mock_instructor, mock_extract):
-    mock_create = AsyncMock(return_value=FAKE_SUMMARY)
+    mock_create = AsyncMock(return_value=FAKE_REQUIREMENTS)
     mock_instructor.from_litellm.return_value.create = mock_create
     mock_extract.return_value = "x" * 5000
 
-    agent = SummarizationAgent(AgentConfig(max_input_chars=100))
-    await agent.summarize_pdf("big.pdf")
+    agent = SDMExtractionAgent(AgentConfig(max_input_chars=100))
+    await agent.extract_from_pdf("big.pdf")
 
     call_args = mock_create.call_args
     user_msg = call_args.kwargs["messages"][1]["content"]
@@ -81,18 +94,18 @@ async def test_long_text_truncated(mock_instructor, mock_extract):
 @patch("lit_review.agent.extract_text")
 @patch("lit_review.agent.instructor")
 async def test_prompt_with_context_respects_max_input_chars(mock_instructor, mock_extract):
-    mock_create = AsyncMock(return_value=FAKE_SUMMARY)
+    mock_create = AsyncMock(return_value=FAKE_REQUIREMENTS)
     mock_instructor.from_litellm.return_value.create = mock_create
     mock_extract.return_value = "x" * 5000
 
-    agent = SummarizationAgent(AgentConfig(max_input_chars=200))
+    agent = SDMExtractionAgent(AgentConfig(max_input_chars=200))
 
     with patch("lit_review.agent.VectorMemory") as mock_memory_cls:
         mock_memory = AsyncMock()
         mock_memory.query.return_value = ["context " * 20]
         mock_memory_cls.return_value = mock_memory
 
-        await agent.summarize_pdf("big.pdf", references=["ref1"])
+        await agent.extract_from_pdf("big.pdf", references=["ref1"])
 
     user_msg = mock_create.call_args.kwargs["messages"][1]["content"]
     assert len(user_msg) == 200
@@ -126,18 +139,41 @@ def test_config_validation():
     with pytest.raises(ValueError):
         AgentConfig(max_input_chars=0)
 
-    config = AgentConfig(model="anthropic/claude-sonnet-4-6", temperature=0.3)
+    config = AgentConfig(model="anthropic/claude-sonnet-4-6", temperature=0.1)
     assert config.model == "anthropic/claude-sonnet-4-6"
-    assert config.temperature == 0.3
+    assert config.temperature == 0.1
 
 
-def test_structured_summary_fields():
-    data = FAKE_SUMMARY.model_dump()
+def test_sdm_requirements_fields():
+    data = FAKE_REQUIREMENTS.model_dump()
     assert set(data.keys()) == {
         "title",
-        "study_context",
-        "methods",
-        "key_findings",
-        "ecological_implications",
-        "key_sentence",
+        "species",
+        "geographic_extent",
+        "occurrence_type",
+        "sample_size",
+        "occurrence_source",
+        "environmental_variables",
+        "environmental_source",
+        "spatial_resolution",
+        "algorithm",
+        "software",
+        "hyperparameters",
+        "evaluation_metrics",
+        "cv_strategy",
+        "threshold_method",
+        "performance_values",
+        "key_predictors",
+        "predicted_distribution",
     }
+
+
+def test_sdm_requirements_optional_fields():
+    minimal = SDMRequirements(title="A paper title")
+    assert minimal.title == "A paper title"
+    assert minimal.species is None
+    assert minimal.algorithm is None
+    assert minimal.evaluation_metrics is None
+    data = minimal.model_dump()
+    none_fields = [k for k, v in data.items() if v is None]
+    assert len(none_fields) == 17

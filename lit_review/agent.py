@@ -3,19 +3,29 @@ import litellm
 from dotenv import load_dotenv
 
 from .memory import VectorMemory
-from .models import AgentConfig, StructuredSummary
+from .models import AgentConfig, SDMRequirements
 from .pdf import extract_text
 
 load_dotenv()
 
 SYSTEM_PROMPT = (
-    "You are an expert ecological researcher and scientific writer. "
-    "Summarize the following ecological research paper accurately and concisely, "
-    "using scientific language."
+    "You are an expert in species distribution modeling (SDM) and ecological niche modeling. "
+    "Your task is to extract structured technical requirements from the provided research paper. "
+    "Focus specifically on the methodological details needed to reproduce the SDM analysis: "
+    "species identity, occurrence data characteristics, environmental predictors, "
+    "modeling algorithm and settings, evaluation strategy, and key results.\n\n"
+    "Extraction guidelines:\n"
+    "- Be precise: use exact numbers, variable names, and software versions from the paper.\n"
+    "- If the paper reports multiple models, focus on the best-performing or recommended model.\n"
+    "- If a detail is not mentioned in the paper, return null for that field rather than guessing.\n"
+    "- For environmental variables, distinguish between candidate variables and those retained "
+    "after selection.\n"
+    "- For ensemble models, list all component algorithms.\n"
+    "- Include units where relevant (e.g., spatial resolution in meters or arc-seconds)."
 )
 
-PAPER_PREFIX = "Paper:\n\n"
-CONTEXT_PREFIX = "Relevant background:\n"
+PAPER_PREFIX = "SDM Paper:\n\n"
+CONTEXT_PREFIX = "Reference SDM methodology context:\n"
 QUERY_CHARS = 500
 MIN_PARAGRAPH_CHARS = 80
 
@@ -42,14 +52,14 @@ def _build_user_content(text: str, context: str, max_chars: int) -> str:
     return f"{prefix}{text[:available]}"
 
 
-class SummarizationAgent:
+class SDMExtractionAgent:
     def __init__(self, config: AgentConfig | None = None):
         self.config = config or AgentConfig()
         self.client = instructor.from_litellm(litellm.acompletion)
 
-    async def summarize_pdf(
+    async def extract_from_pdf(
         self, pdf_path: str, references: list[str] | None = None
-    ) -> StructuredSummary:
+    ) -> SDMRequirements:
         text = extract_text(pdf_path).strip()
         if not text:
             raise ValueError("PDF contains no extractable text")
@@ -69,7 +79,7 @@ class SummarizationAgent:
 
         return await self.client.create(
             model=self.config.model,
-            response_model=StructuredSummary,
+            response_model=SDMRequirements,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
