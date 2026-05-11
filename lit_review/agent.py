@@ -55,20 +55,20 @@ def _build_eval_content(requirements_json: str, paper_text: str, max_chars: int)
     return f"{prefix}{paper_text[:available]}"
 
 
-def _drop_empty_items(value: Any) -> Any:
+def _drop_empty(value: Any) -> Any:
     if isinstance(value, dict):
-        cleaned = {
-            key: cleaned_value
-            for key, item in value.items()
-            if (cleaned_value := _drop_empty_items(item)) not in ({}, [], None)
-        }
-        return cleaned
+        cleaned = {}
+        for key, item in value.items():
+            if key == "evidence":
+                continue
+            c = _drop_empty(item)
+            if c is None or c == [] or c == {}:
+                continue
+            cleaned[key] = c
+        return cleaned or None
     if isinstance(value, list):
-        return [
-            cleaned_item
-            for item in value
-            if (cleaned_item := _drop_empty_items(item)) not in ({}, [], None)
-        ]
+        result = [c for item in value if (c := _drop_empty(item)) not in (None, [], {})]
+        return result or None
     return value
 
 
@@ -112,10 +112,8 @@ class SDMExtractionAgent:
         if not text:
             raise ValueError("PDF contains no extractable text")
 
-        requirements_json = json.dumps(
-            _drop_empty_items(requirements.model_dump(exclude_none=True)),
-            indent=2,
-        )
+        cleaned = _drop_empty(requirements.model_dump())
+        requirements_json = json.dumps(cleaned, indent=2)
         user_content = _build_eval_content(requirements_json, text, self.config.max_input_chars)
 
         return await self.client.create(

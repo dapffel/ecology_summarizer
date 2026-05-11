@@ -40,8 +40,10 @@ async def main():
     agent = SDMExtractionAgent()
     result = await agent.extract_from_pdf("paper.pdf")
     print(result.study.title)
-    print(result.model.algorithm.value)
-    print(result.evaluation.metrics.value)
+    print(result.study.species)              # ['Bufo marinus']
+    print(result.predictors.variables)       # ['BIO1', 'BIO12', ...]
+    for m in result.models:
+        print(f"{m.algorithm}: {m.performance}")
 
 asyncio.run(main())
 ```
@@ -85,13 +87,13 @@ print(evaluation.overall_assessment)
 
 ## Output
 
-`SDMRequirements` is grouped into methodology sections:
+`SDMRequirements` is grouped into methodology sections with machine-readable typed fields:
 
-- `study` — title, species, geographic extent
-- `occurrence` — occurrence type, sample size, occurrence source
-- `predictors` — environmental variables, data source, spatial resolution
-- `model` — algorithm, software, hyperparameters
-- `evaluation` — metrics, cross-validation, thresholding, performance values
-- `results` — key predictors and predicted distribution
+- `study` — `title: str`, `species: list[str]`, `geographic_extent: str`
+- `occurrence` — `occurrence_type: str`, `total_presences: int`, `total_absences: int`, `data_source: str`
+- `predictors` — `variables: list[str]`, `data_source: str`, `spatial_resolution: str`
+- `models` — `list[SDMModelSpec]`, one per algorithm/variant tested. Each has `algorithm: str`, `software: str`, `hyperparameters: str`, `performance: list[PerformanceMetric]`, `is_best: bool`
+- `evaluation` — `cv_strategy: str`, `metrics_used: list[str]`, `threshold_method: str`
+- `results` — `key_predictors: list[str]`, `projected_scenarios: list[ProjectedScenario]`
 
-Most extracted methodology items are `ExtractedField` objects with `value`, `evidence`, `section`, and `page`. Use `value` for downstream virtual species workflows and `evidence` to audit where the value came from. Missing details are represented as `value=None` since papers vary in what they report.
+Performance metrics are numeric: `PerformanceMetric(metric="AUC", value=0.92, std=0.03)`. Each section has an `evidence` field for provenance. Missing details default to `None` or `[]`.

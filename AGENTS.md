@@ -28,7 +28,8 @@ Set provider API keys in `.env` at the project root (loaded via python-dotenv). 
 Single agent that extracts species distribution modeling (SDM) requirements from research PDFs into a validated Pydantic model. The extracted data is designed to drive virtual species experiments.
 
 - **`agent.py`** — `SDMExtractionAgent` orchestrates the pipeline: extract PDF text, optionally retrieve context from reference SDM papers via vector memory, call LLM via Instructor+LiteLLM to get an `SDMRequirements` model directly (no regex parsing).
-- **`models.py`** — Pydantic v2 `AgentConfig`, nested `SDMRequirements` sections, evidence-bearing `ExtractedField` values, and `ExtractionEval`. Field descriptions guide the LLM's structured extraction and verification.
+- **`models.py`** — Pydantic v2 `AgentConfig`, nested `SDMRequirements` with typed fields (lists, ints, floats), per-model `SDMModelSpec` with numeric `PerformanceMetric`, and `ExtractionEval`. Field descriptions guide the LLM's structured extraction.
+- **`prompts.py`** — All prompt text for extraction and evaluation, separated from pipeline logic.
 - **`memory.py`** — `VectorMemory` wraps FAISS for in-memory vector search. Used to provide context from reference SDM papers during extraction. Embeds via `litellm.aembedding()`, splits text via `langchain-text-splitters`.
 - **`pdf.py`** — PDF text extraction via PyMuPDF.
 

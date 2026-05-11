@@ -13,215 +13,248 @@ class AgentConfig(BaseModel):
     max_input_chars: int = Field(default=100_000, gt=0)
 
 
-class ExtractedField(BaseModel):
-    value: str | None = Field(
-        default=None,
-        description="Extracted value, or null if the paper does not report this detail.",
-    )
-    evidence: str | None = Field(
-        default=None,
-        description="Brief quote or close paraphrase supporting the extracted value.",
-    )
-    section: str | None = Field(
-        default=None,
-        description="Paper section where the evidence appears, if identifiable.",
-    )
-    page: int | None = Field(
-        default=None,
-        ge=1,
-        description="PDF page number where the evidence appears, if identifiable.",
-    )
+# ---------------------------------------------------------------------------
+# Extraction models — machine-readable, typed fields
+# ---------------------------------------------------------------------------
 
 
 class StudyMetadata(BaseModel):
     title: str = Field(description="Title of the paper")
-    species: ExtractedField = Field(
-        default_factory=ExtractedField,
+    species: list[str] = Field(
+        default_factory=list,
         description=(
-            "Focal species or taxonomic group modeled "
-            "(e.g. 'Quercus robur', 'European bats', 'invasive plants'). "
-            "Use the scientific name when given."
+            "List of focal species or taxonomic groups, using scientific names. "
+            "Example: ['Bufo marinus', 'Quercus robur']"
         ),
     )
-    geographic_extent: ExtractedField = Field(
-        default_factory=ExtractedField,
+    geographic_extent: str | None = Field(
+        default=None,
         description=(
-            "Geographic scope of the study area "
-            "(e.g. 'Iberian Peninsula', 'global', 'eastern United States'). "
-            "Include coordinates or bounding box if reported."
+            "Concise geographic scope. "
+            "Example: 'Australia', 'Iberian Peninsula (35-44N, 10W-4E)'"
         ),
+    )
+    evidence: str | None = Field(
+        default=None,
+        description="Key quotes from the paper supporting study metadata extraction.",
     )
 
 
 class OccurrenceData(BaseModel):
-    occurrence_type: ExtractedField = Field(
-        default_factory=ExtractedField,
+    occurrence_type: str | None = Field(
+        default=None,
+        description="One of: 'presence-only', 'presence-absence', or 'abundance'.",
+    )
+    total_presences: int | None = Field(
+        default=None,
+        description="Number of presence records used.",
+    )
+    total_absences: int | None = Field(
+        default=None,
         description=(
-            "Type of species occurrence data used: "
-            "'presence-only', 'presence-absence', or 'abundance'."
+            "Number of absence or pseudo-absence records. " "Null for presence-only studies."
         ),
     )
-    sample_size: ExtractedField = Field(
-        default_factory=ExtractedField,
+    sample_size_details: str | None = Field(
+        default=None,
         description=(
-            "Number of occurrence records or sites used for modeling "
-            "(e.g. '342 presence points', '150 presence / 200 absence'). "
-            "Include both training and test sizes if reported separately."
+            "Additional context on sampling: thinning, train/test split sizes, "
+            "pseudo-absence generation method. Keep concise."
         ),
     )
-    occurrence_source: ExtractedField = Field(
-        default_factory=ExtractedField,
-        description=(
-            "Source of occurrence data "
-            "(e.g. 'GBIF', 'field surveys 2010-2020', 'museum specimens', 'eBird'). "
-            "List all sources if multiple."
-        ),
+    data_source: str | None = Field(
+        default=None,
+        description="Data source(s). Example: 'GBIF, field surveys 2010-2020'",
+    )
+    evidence: str | None = Field(
+        default=None,
+        description="Key quotes supporting occurrence data extraction.",
     )
 
 
 class EnvironmentalPredictors(BaseModel):
-    variables: ExtractedField = Field(
-        default_factory=ExtractedField,
+    variables: list[str] = Field(
+        default_factory=list,
         description=(
-            "List of environmental predictor variables used in the model "
-            "(e.g. 'bioclimatic variables BIO1-BIO19, elevation, land cover, NDVI'). "
-            "Be specific about which variables were retained in the final model if reported."
+            "List of environmental variable names or codes retained in the final model. "
+            "Use codes when available. "
+            "Example: ['BIO1', 'BIO12', 'elevation', 'NDVI']"
         ),
     )
-    source: ExtractedField = Field(
-        default_factory=ExtractedField,
-        description=(
-            "Source datasets for environmental predictors "
-            "(e.g. 'WorldClim v2.1', 'CHELSA', 'MODIS'). "
-            "Include version numbers when provided."
-        ),
+    data_source: str | None = Field(
+        default=None,
+        description="Source dataset(s) with versions. Example: 'WorldClim v2.1, SoilGrids 250m'",
     )
-    spatial_resolution: ExtractedField = Field(
-        default_factory=ExtractedField,
+    spatial_resolution: str | None = Field(
+        default=None,
+        description="Grid cell size. Example: '30 arc-seconds (~1 km)'",
+    )
+    temporal_range: str | None = Field(
+        default=None,
+        description="Time period of environmental data. Example: '1970-2000'",
+    )
+    evidence: str | None = Field(
+        default=None,
+        description="Key quotes supporting predictor data extraction.",
+    )
+
+
+class PerformanceMetric(BaseModel):
+    metric: str = Field(description="Metric name. Example: 'AUC', 'TSS', 'COR', 'Boyce', 'RMSE'")
+    value: float = Field(description="Numeric value of the metric.")
+    std: float | None = Field(
+        default=None,
+        description="Standard deviation or uncertainty, if reported.",
+    )
+    context: str | None = Field(
+        default=None,
         description=(
-            "Spatial resolution or grid cell size of the environmental data "
-            "and/or model predictions (e.g. '30 arc-seconds (~1 km)', '250 m'). "
-            "Note the coordinate reference system if reported."
+            "Context for this metric value. "
+            "Example: 'cross-validated', 'test set', 'current climate', '2070 SSP5-8.5'"
         ),
     )
 
 
-class ModelingMethod(BaseModel):
-    algorithm: ExtractedField = Field(
-        default_factory=ExtractedField,
+class SDMModelSpec(BaseModel):
+    algorithm: str = Field(
+        description="Algorithm name. Example: 'MaxEnt', 'GLM', 'BRT', 'Random Forest'"
+    )
+    variant: str | None = Field(
+        default=None,
         description=(
-            "SDM algorithm(s) used "
-            "(e.g. 'MaxEnt', 'Random Forest', 'GLM', 'BRT', "
-            "'ensemble of MaxEnt + BRT + GAM'). "
-            "List all algorithms if a comparison or ensemble study."
+            "Model variant if applicable. "
+            "Example: 'smooth', 'default', 'hinge-only', 'with interaction terms'"
         ),
     )
-    software: ExtractedField = Field(
-        default_factory=ExtractedField,
+    software: str | None = Field(
+        default=None,
+        description="Software and version. Example: 'R dismo v1.3-9', 'MaxEnt v3.4.4'",
+    )
+    hyperparameters: str | None = Field(
+        default=None,
         description=(
-            "Software, package, or platform used to fit the SDM "
-            "(e.g. 'R dismo package', 'MaxEnt 3.4.4', 'biomod2', 'ENMeval'). "
-            "Include version numbers when provided."
+            "Key settings for this specific model. "
+            "Example: 'regularization multiplier = 1.5, feature classes = LQH'"
         ),
     )
-    hyperparameters: ExtractedField = Field(
-        default_factory=ExtractedField,
-        description=(
-            "Key model hyperparameters or settings reported "
-            "(e.g. 'regularization multiplier = 2, feature classes = LQH', "
-            "'ntree = 1000, mtry = 4', 'background points = 10000'). "
-            "Include feature selection method if reported."
-        ),
+    performance: list[PerformanceMetric] = Field(
+        default_factory=list,
+        description="Performance metrics reported for this model.",
+    )
+    is_best: bool = Field(
+        default=False,
+        description="True if this was the best-performing or recommended model.",
     )
 
 
-class EvaluationMethod(BaseModel):
-    metrics: ExtractedField = Field(
-        default_factory=ExtractedField,
+class EvaluationProtocol(BaseModel):
+    cv_strategy: str | None = Field(
+        default=None,
         description=(
-            "Performance metrics reported "
-            "(e.g. 'AUC = 0.92, TSS = 0.78', 'Boyce index', 'RMSE'). "
-            "Include numeric values when available."
+            "Cross-validation or splitting strategy. "
+            "Example: '10-fold CV', 'spatial block CV', '70/30 random split'"
         ),
     )
-    cv_strategy: ExtractedField = Field(
-        default_factory=ExtractedField,
+    metrics_used: list[str] = Field(
+        default_factory=list,
+        description="List of metric names used for evaluation. Example: ['AUC', 'TSS']",
+    )
+    threshold_method: str | None = Field(
+        default=None,
         description=(
-            "Cross-validation or data-splitting strategy used for evaluation "
-            "(e.g. '10-fold cross-validation', 'spatial block CV', '70/30 random split'). "
-            "Note if spatial structure was accounted for."
+            "Method for converting continuous suitability to binary predictions. "
+            "Example: 'maximum sensitivity + specificity'. Null if not reported."
         ),
     )
-    threshold_method: ExtractedField = Field(
-        default_factory=ExtractedField,
-        description=(
-            "Method used to convert continuous suitability to binary predictions "
-            "(e.g. 'maximum sensitivity + specificity', "
-            "'10th percentile training presence'). "
-            "Leave value null if the paper does not specify."
-        ),
+    evidence: str | None = Field(
+        default=None,
+        description="Key quotes supporting evaluation protocol extraction.",
     )
-    performance_values: ExtractedField = Field(
-        default_factory=ExtractedField,
-        description=(
-            "Summary of the best or final model performance values "
-            "(e.g. 'mean AUC = 0.91 +/- 0.03 across folds'). "
-            "Report as precisely as the paper states."
-        ),
+
+
+class ProjectedScenario(BaseModel):
+    scenario_name: str = Field(
+        description="Scenario identifier. Example: 'SSP5-8.5 2070', 'RCP4.5 2050', '20xx extreme'"
+    )
+    description: str | None = Field(
+        default=None,
+        description="Brief description of the scenario conditions.",
     )
 
 
 class SDMResults(BaseModel):
-    key_predictors: ExtractedField = Field(
-        default_factory=ExtractedField,
+    key_predictors: list[str] = Field(
+        default_factory=list,
         description=(
-            "Most important predictor variables identified by the model "
-            "(e.g. 'mean annual temperature (BIO1) and precipitation seasonality (BIO15) "
-            "contributed 65% of model gain'). "
-            "Include variable importance values if reported."
+            "Most important predictor variables, ordered by importance. "
+            "Use the same names as in predictors.variables. "
+            "Example: ['BIO1', 'BIO12', 'elevation']"
         ),
     )
-    predicted_distribution: ExtractedField = Field(
-        default_factory=ExtractedField,
+    variable_importance: str | None = Field(
+        default=None,
         description=(
-            "Brief description of the predicted distribution or suitability map, "
-            "including projected range shifts, area of suitable habitat, "
-            "or future climate scenarios used "
-            "(e.g. 'suitable habitat projected to shift 300 km northward "
-            "under SSP3-7.0 by 2070')."
+            "Numeric importance values or contribution percentages if reported. "
+            "Example: 'BIO1: 45%, BIO12: 27%, elevation: 15%'"
         ),
+    )
+    current_distribution: str | None = Field(
+        default=None,
+        description="Brief description of predicted current distribution.",
+    )
+    projected_scenarios: list[ProjectedScenario] = Field(
+        default_factory=list,
+        description="Future climate scenarios evaluated, if any.",
+    )
+    projected_distribution: str | None = Field(
+        default=None,
+        description="Brief description of projected distribution changes.",
+    )
+    evidence: str | None = Field(
+        default=None,
+        description="Key quotes supporting results extraction.",
     )
 
 
 class SDMRequirements(BaseModel):
-    study: StudyMetadata = Field(description="Study metadata and focal modeling target")
+    study: StudyMetadata = Field(description="Study metadata and focal species")
     occurrence: OccurrenceData = Field(
         default_factory=OccurrenceData,
-        description="Occurrence data and sampling details needed to recreate the SDM",
+        description="Species occurrence data used in the SDM",
     )
     predictors: EnvironmentalPredictors = Field(
         default_factory=EnvironmentalPredictors,
-        description="Environmental predictor data used by the SDM",
+        description="Environmental predictor variables and data sources",
     )
-    model: ModelingMethod = Field(
-        default_factory=ModelingMethod,
-        description="Modeling algorithm, software, and settings",
+    models: list[SDMModelSpec] = Field(
+        default_factory=list,
+        description=(
+            "One entry per modeling algorithm or variant tested. "
+            "For single-model studies, this list has one entry. "
+            "For comparison or ensemble studies, one entry per algorithm/variant."
+        ),
     )
-    evaluation: EvaluationMethod = Field(
-        default_factory=EvaluationMethod,
-        description="Validation, thresholding, and performance reporting",
+    evaluation: EvaluationProtocol = Field(
+        default_factory=EvaluationProtocol,
+        description="Evaluation strategy: cross-validation, metrics, thresholding",
     )
     results: SDMResults = Field(
         default_factory=SDMResults,
-        description="Reported predictor importance and distribution outputs",
+        description="Key findings: predictor importance and distribution predictions",
     )
+
+
+# ---------------------------------------------------------------------------
+# Evaluation models — cross-reference check
+# ---------------------------------------------------------------------------
 
 
 class FieldVerification(BaseModel):
     field_path: str = Field(
         description=(
-            "Dot-separated path to the SDMRequirements field being verified "
-            "(e.g. 'model.algorithm')"
+            "Dot-separated path to the field being verified. "
+            "Use indexing for list items. "
+            "Example: 'models[0].algorithm', 'predictors.variables', 'study.species'"
         )
     )
     extracted_value: str = Field(description="The value that was extracted for this field")
@@ -243,7 +276,7 @@ class FieldVerification(BaseModel):
 
 class ExtractionEval(BaseModel):
     field_verifications: list[FieldVerification] = Field(
-        description="Verification result for each non-null extracted field"
+        description="Verification result for each substantive extracted field"
     )
     num_verified: int = Field(description="Count of fields classified as verified")
     num_inaccurate: int = Field(description="Count of fields classified as inaccurate")
