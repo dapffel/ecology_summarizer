@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -284,3 +286,53 @@ class ExtractionEval(BaseModel):
     overall_assessment: str = Field(
         description="Brief overall assessment of extraction quality and any key issues found"
     )
+
+
+# ---------------------------------------------------------------------------
+# Constraint validation models
+# ---------------------------------------------------------------------------
+
+
+class Violation(BaseModel):
+    field_path: str = Field(description="Dot-separated path, e.g. 'models[0].performance[0].value'")
+    rule: str = Field(description="Human-readable rule that was violated")
+    actual_value: str = Field(description="The problematic value as a string")
+    severity: Literal["error", "warning"] = Field(
+        description="'error' = impossible value, 'warning' = unexpected but possible"
+    )
+
+
+class ValidationReport(BaseModel):
+    violations: list[Violation] = Field(default_factory=list)
+    num_errors: int = Field(default=0)
+    num_warnings: int = Field(default=0)
+
+    @property
+    def is_valid(self) -> bool:
+        return self.num_errors == 0
+
+
+# ---------------------------------------------------------------------------
+# Benchmark models
+# ---------------------------------------------------------------------------
+
+
+class FieldScore(BaseModel):
+    field_path: str = Field(description="Dot-separated path, e.g. 'study.species'")
+    match: bool = Field(description="Whether extracted value matches gold standard")
+    expected: str = Field(description="Gold-standard value as string")
+    actual: str = Field(description="Extracted value as string")
+
+
+class BenchmarkResult(BaseModel):
+    paper_id: str = Field(description="Identifier for the benchmarked paper")
+    scores: list[FieldScore] = Field(default_factory=list)
+    precision: float = Field(default=0.0, description="Correct extractions / total extracted")
+    recall: float = Field(default=0.0, description="Correct extractions / total gold fields")
+
+
+class BenchmarkSummary(BaseModel):
+    results: list[BenchmarkResult] = Field(default_factory=list)
+    overall_precision: float = Field(default=0.0)
+    overall_recall: float = Field(default=0.0)
+    per_field_accuracy: dict[str, float] = Field(default_factory=dict)

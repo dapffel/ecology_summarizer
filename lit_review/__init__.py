@@ -1,9 +1,13 @@
 from .agent import SDMExtractionAgent
+from .benchmark import Benchmark
 from .models import (
     AgentConfig,
+    BenchmarkResult,
+    BenchmarkSummary,
     EnvironmentalPredictors,
     EvaluationProtocol,
     ExtractionEval,
+    FieldScore,
     FieldVerification,
     OccurrenceData,
     PerformanceMetric,
@@ -12,14 +16,21 @@ from .models import (
     SDMRequirements,
     SDMResults,
     StudyMetadata,
+    ValidationReport,
+    Violation,
 )
+from .validators import validate
 
 __all__ = [
     "SDMExtractionAgent",
+    "Benchmark",
     "AgentConfig",
+    "BenchmarkResult",
+    "BenchmarkSummary",
     "EnvironmentalPredictors",
     "EvaluationProtocol",
     "ExtractionEval",
+    "FieldScore",
     "FieldVerification",
     "OccurrenceData",
     "PerformanceMetric",
@@ -28,4 +39,7 @@ __all__ = [
     "SDMRequirements",
     "SDMResults",
     "StudyMetadata",
+    "ValidationReport",
+    "Violation",
+    "validate",
 ]
